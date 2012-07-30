@@ -45,7 +45,7 @@
 
 					// 1: Insert Test.
 					// Follows typical real world usage - parallel inserts one event per stream
-					int streamCount = 10;
+					int streamCount = 100;
 					int eventsPerStream = 100;
 					var stopwatch = new Stopwatch();
 					stopwatch.Start();
