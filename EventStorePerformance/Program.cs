@@ -7,7 +7,9 @@
 	using System.Text;
 	using System.Threading.Tasks;
 	using EventStore;
+	using EventStore.Persistence.MongoPersistence;
 	using EventStore.Persistence.SqlPersistence.SqlDialects;
+	using EventStore.Serialization;
 
 	public class Program
 	{
@@ -26,6 +28,8 @@
 			new SqlServerPerfTest().Run(runs);
 			new PostgreSqlPerfTest().Run(runs);
 			new MySqlPerfTest().Run(runs);
+			//new RavenPerfTest().Run(runs);
+			new MongoPerfTest().Run(runs);
 			Console.WriteLine("Done. Press any key.");
 			Console.ReadLine();
 		}
@@ -49,17 +53,10 @@
 					int eventsPerStream = 100;
 					var stopwatch = new Stopwatch();
 					stopwatch.Start();
+
 					Parallel.For(0, streamCount, i =>
 					{
-						Guid streamId = Guid.NewGuid();
-						for (int j = 0; j < eventsPerStream; j++)
-						{
-							using (IEventStream eventStream = storeEvents.OpenStream(streamId, 0, int.MaxValue))
-							{
-								eventStream.Add(new EventMessage { Body = CreateEvent() });
-								eventStream.CommitChanges(Guid.NewGuid());
-							}
-						}
+						InsertEventsIntoStream(storeEvents, eventsPerStream);
 					});
 					stopwatch.Stop();
 					int totalEvents = streamCount * eventsPerStream;
@@ -89,6 +86,19 @@
 						insertRate.ToString().PadRight(22),
 						readRate.ToString().PadRight(20));
 					storeEvents.Dispose();
+				}
+			}
+		}
+
+		private void InsertEventsIntoStream(IStoreEvents storeEvents, int eventsPerStream)
+		{
+			Guid streamId = Guid.NewGuid();
+			for (int j = 0; j < eventsPerStream; j++)
+			{
+				using (IEventStream eventStream = storeEvents.OpenStream(streamId, 0, int.MaxValue))
+				{
+					eventStream.Add(new EventMessage { Body = CreateEvent() });
+					eventStream.CommitChanges(Guid.NewGuid());
 				}
 			}
 		}
@@ -160,6 +170,22 @@
 			return wireup
 				.UsingSqlPersistence("MySql")
 				.WithDialect(new MySqlDialect());
+		}
+	}
+
+	public class RavenPerfTest : PerfTestBase
+	{
+		protected override PersistenceWireup ConfigurePersistence(Wireup wireup)
+		{
+			return wireup.UsingRavenPersistence("Raven");
+		}
+	}
+
+	public class MongoPerfTest : PerfTestBase
+	{
+		protected override PersistenceWireup ConfigurePersistence(Wireup wireup)
+		{
+			return wireup.UsingMongoPersistence("Mongo", new DocumentObjectSerializer());
 		}
 	}
 
