@@ -1,14 +1,10 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using EventStore;
+﻿
 using EventStore.Logging;
-using EventStore.Persistence.MongoPersistence;
-using EventStore.Serialization;
-using EventStorePerformance;
+
 
 namespace EventStorePerformance
 {
+
     using System;
     using System.Collections.Generic;
     using System.Diagnostics;
@@ -16,7 +12,9 @@ namespace EventStorePerformance
     using System.Text;
     using System.Threading.Tasks;
     using EventStore;
+    using EventStore.Persistence.MongoPersistence;
     using EventStore.Persistence.SqlPersistence.SqlDialects;
+    using EventStore.Serialization;
 
     public class Program
     {
@@ -35,6 +33,7 @@ namespace EventStorePerformance
             //new SqlServerPerfTest().Run(runs);
             //new PostgreSqlPerfTest().Run(runs);
             //new MySqlPerfTest().Run(runs);
+            //new RavenPerfTest().Run(runs);
             new MongoPerfTest().Run(runs);
             Console.WriteLine("Done. Press any key.");
             Console.ReadLine();
@@ -49,8 +48,7 @@ namespace EventStorePerformance
             {
                 Wireup wireup = Wireup.Init();
                 PersistenceWireup persistenceWireup = ConfigurePersistence(wireup);
-
-                using (IStoreEvents storeEvents = persistenceWireup.InitializeStorageEngine().UsingBsonSerialization().Build())
+                using (IStoreEvents storeEvents = persistenceWireup.InitializeStorageEngine().UsingBinarySerialization().Build())
                 {
                     storeEvents.Advanced.Purge();
 
@@ -60,17 +58,10 @@ namespace EventStorePerformance
                     int eventsPerStream = 100;
                     var stopwatch = new Stopwatch();
                     stopwatch.Start();
+
                     Parallel.For(0, streamCount, i =>
                     {
-                        Guid streamId = Guid.NewGuid();
-                        for (int j = 0; j < eventsPerStream; j++)
-                        {
-                            using (IEventStream eventStream = storeEvents.OpenStream(streamId, 0, int.MaxValue))
-                            {
-                                eventStream.Add(new EventMessage { Body = CreateEvent() });
-                                eventStream.CommitChanges(Guid.NewGuid());
-                            }
-                        }
+                        InsertEventsIntoStream(storeEvents, eventsPerStream);
                     });
                     stopwatch.Stop();
                     int totalEvents = streamCount * eventsPerStream;
@@ -100,6 +91,19 @@ namespace EventStorePerformance
                         insertRate.ToString().PadRight(22),
                         readRate.ToString().PadRight(20));
                     storeEvents.Dispose();
+                }
+            }
+        }
+
+        private void InsertEventsIntoStream(IStoreEvents storeEvents, int eventsPerStream)
+        {
+            Guid streamId = Guid.NewGuid();
+            for (int j = 0; j < eventsPerStream; j++)
+            {
+                using (IEventStream eventStream = storeEvents.OpenStream(streamId, 0, int.MaxValue))
+                {
+                    eventStream.Add(new EventMessage { Body = CreateEvent() });
+                    eventStream.CommitChanges(Guid.NewGuid());
                 }
             }
         }
@@ -174,14 +178,19 @@ namespace EventStorePerformance
         }
     }
 
+    public class RavenPerfTest : PerfTestBase
+    {
+        protected override PersistenceWireup ConfigurePersistence(Wireup wireup)
+        {
+            return wireup.UsingRavenPersistence("Raven");
+        }
+    }
+
     public class MongoPerfTest : PerfTestBase
     {
         protected override PersistenceWireup ConfigurePersistence(Wireup wireup)
         {
-            return wireup
-                .UsingMongoPersistenceFromConnectionString("mongodb://local.dev/EventStore?safe=true", new DocumentObjectSerializer());
-
-
+            return wireup.UsingMongoPersistence("Mongo", new DocumentObjectSerializer());
         }
     }
 
@@ -199,42 +208,43 @@ namespace EventStorePerformance
             return _connectionString;
         }
     }
-}
 
-public class MongoPersistenceWireupFromConnectionString : PersistenceWireup
-{
-    private static readonly ILog Logger = LogFactory.BuildLogger(typeof(MongoPersistenceWireupFromConnectionString));
 
-    public MongoPersistenceWireupFromConnectionString(Wireup inner, string connectionString, IDocumentSerializer serializer)
-        : base(inner)
+    public class MongoPersistenceWireupFromConnectionString : PersistenceWireup
     {
-        Logger.Debug("Configuring Mongo persistence engine.");
-        Container.Register(c => new MongoPersistenceFactoryFromConnectionString(connectionString, serializer).Build());
-    }
-}
+        private static readonly ILog Logger = LogFactory.BuildLogger(typeof(MongoPersistenceWireupFromConnectionString));
 
-public static class MongoPersistenceWireupExtensions
-{
-    public static PersistenceWireup UsingMongoPersistenceFromConnectionString(
-        this Wireup wireup, string connectionName, IDocumentSerializer serializer)
-    {
-        return new MongoPersistenceWireupFromConnectionString(wireup, connectionName, serializer);
+        public MongoPersistenceWireupFromConnectionString(Wireup inner, string connectionString, IDocumentSerializer serializer)
+            : base(inner)
+        {
+            Logger.Debug("Configuring Mongo persistence engine.");
+            Container.Register(c => new MongoPersistenceFactoryFromConnectionString(connectionString, serializer).Build());
+        }
     }
 
-}
-
-public static class MathExtenions
-{
-    public static List<double> RemoveOutliers(this List<double> instance)
+    public static class MongoPersistenceWireupExtensions
     {
-        instance.Sort();
-        int lqIndex = Convert.ToInt32(Math.Round(instance.Count * 0.25));
-        int uqIndex = Convert.ToInt32(Math.Round(instance.Count * 0.75));
-        double innerQuartileRange = instance[uqIndex] - instance[lqIndex];
-        double lowerSuspectOutlierValue = instance[uqIndex] - (1.5 * innerQuartileRange);
-        double upperSuspectOutlierValue = instance[lqIndex] + (1.5 * innerQuartileRange);
-        return instance.Where(s => s > lowerSuspectOutlierValue && s < upperSuspectOutlierValue).ToList();
-    }
-}
+        public static PersistenceWireup UsingMongoPersistenceFromConnectionString(
+            this Wireup wireup, string connectionName, IDocumentSerializer serializer)
+        {
+            return new MongoPersistenceWireupFromConnectionString(wireup, connectionName, serializer);
+        }
 
+    }
+
+    public static class MathExtenions
+    {
+        public static List<double> RemoveOutliers(this List<double> instance)
+        {
+            instance.Sort();
+            int lqIndex = Convert.ToInt32(Math.Round(instance.Count * 0.25));
+            int uqIndex = Convert.ToInt32(Math.Round(instance.Count * 0.75));
+            double innerQuartileRange = instance[uqIndex] - instance[lqIndex];
+            double lowerSuspectOutlierValue = instance[uqIndex] - (1.5 * innerQuartileRange);
+            double upperSuspectOutlierValue = instance[lqIndex] + (1.5 * innerQuartileRange);
+            return instance.Where(s => s > lowerSuspectOutlierValue && s < upperSuspectOutlierValue).ToList();
+        }
+    }
+
+}
 
